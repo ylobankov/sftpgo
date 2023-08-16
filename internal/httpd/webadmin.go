@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -3206,14 +3207,49 @@ func (s *httpdServer) handleWebAddUserPost(w http.ResponseWriter, r *http.Reques
 		s.renderForbiddenPage(w, r, err.Error())
 		return
 	}
+	log.Println("Request from admin: ", claims.Username)
+	admin, err := dataprovider.AdminExists(claims.Username)
+	if err != nil {
+		log.Println(err)
+	}
+	for _, item_user_group := range user.Groups {
+		x := func(item_user_group string, admin dataprovider.Admin) bool {
+			for _, item_admin_group := range admin.Groups {
+				if item_user_group == item_admin_group.Name {
+					return true
+				}
+			}
+			return false
+		}
+		if !x(item_user_group.Name, admin) {
+			s.renderForbiddenPage(w, r, errors.New("Failed groups. Custom function.").Error())
+			return
+		}
+	}
+	for _, item_group := range admin.Groups {
+		if item_group.Options.AddToUsersAs == 1 {
+			G_TMP, err := dataprovider.GroupExists(item_group.Name)
+			if err != nil {
+				log.Println(err)
+				break
+			}
+			user.Permissions = G_TMP.UserSettings.Permissions
+			NowTime := time.Now().AddDate(0, 0, G_TMP.UserSettings.ExpiresIn).UnixMilli()
+			user.HomeDir = G_TMP.UserSettings.HomeDir
+			user.ExpirationDate = NowTime
+		}
+	}
+
 	user = getUserFromTemplate(user, userTemplateFields{
 		Username:   user.Username,
 		Password:   user.Password,
 		PublicKeys: user.PublicKeys,
 	})
+
 	if claims.Role != "" {
 		user.Role = claims.Role
 	}
+
 	user.Filters.RecoveryCodes = nil
 	user.Filters.TOTPConfig = dataprovider.UserTOTPConfig{
 		Enabled: false,
